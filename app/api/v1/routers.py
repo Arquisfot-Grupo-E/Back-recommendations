@@ -3,6 +3,7 @@ from app.core.auth import get_current_user
 from app.schemas.genres import GenresPayload
 from app.services.storage import save_user_genres, get_user_genres
 from app.services.storage import get_all_genres
+from app.services.graph import create_user_with_genres
 
 router = APIRouter()
 
@@ -25,6 +26,11 @@ async def set_user_genres(payload: GenresPayload, current_user=Depends(get_curre
     # payload.genres ya validado para tener 3 géneros únicos
     first_name = current_user.get("first_name")
     save_user_genres(user_id, payload.genres, name=first_name)
+    # Also persist to Neo4j (best-effort; errors are logged but don't block the API)
+    try:
+        create_user_with_genres(user_id, first_name, payload.genres)
+    except Exception:
+        pass
     return {"user_id": user_id, "name": first_name, "saved_genres": get_user_genres(user_id)}
 
 
