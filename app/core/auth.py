@@ -39,4 +39,7 @@ async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] =
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="user_id no encontrado en token")
 
-    return {"user_id": user_id, "claims": payload}
+    # Optionally extract first_name if included in the token payload
+    first_name = payload.get("first_name")
+
+    return {"user_id": user_id, "first_name": first_name, "claims": payload}

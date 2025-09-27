@@ -23,11 +23,21 @@ async def create_item(payload: dict, current_user=Depends(get_current_user)):
 async def set_user_genres(payload: GenresPayload, current_user=Depends(get_current_user)):
     user_id = current_user.get("user_id")
     # payload.genres ya validado para tener 3 géneros únicos
-    save_user_genres(user_id, payload.genres)
-    return {"user_id": user_id, "saved_genres": get_user_genres(user_id)}
+    first_name = current_user.get("first_name")
+    save_user_genres(user_id, payload.genres, name=first_name)
+    return {"user_id": user_id, "name": first_name, "saved_genres": get_user_genres(user_id)}
 
 
 @router.get("/admin/genres")
 async def admin_get_all_genres():
     """Public admin endpoint for development: returns the full in-memory store."""
-    return get_all_genres()
+    raw = get_all_genres()
+    # Convert dict {user_id: {name, genres}} into list of objects with explicit id
+    result = []
+    for uid, entry in raw.items():
+        result.append({
+            "id": uid,
+            "name": entry.get("name"),
+            "genres": entry.get("genres", []),
+        })
+    return result
