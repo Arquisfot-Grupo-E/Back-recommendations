@@ -1,3 +1,4 @@
+import routes.test as test  
 from fastapi import FastAPI
 
 from app.api.v1.routers import router as api_router
@@ -18,3 +19,5 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run("app.main:app", host="127.0.0.1", port=8002, reload=True)
+
+app.include_router(test.router, prefix="/api", tags=["test"])
