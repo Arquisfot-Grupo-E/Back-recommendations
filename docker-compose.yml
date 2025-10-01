@@ -1,0 +1,20 @@
+services:
+  recommendations_service:
+    build: .
+    container_name: recommendations_service
+    ports:
+      - "8002:8002"
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./app:/app/app
+      - ./routes:/app/routes
+    networks:
+      - bookworm_network
+
+networks:
+  bookworm_network:
+    external: true
+    name: bookworm_network
