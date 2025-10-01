@@ -10,6 +10,9 @@ from app.db.neo4j import get_driver
 from app.schemas.book import Book
 import httpx
 import logging
+from fastapi import Request
+from typing import List
+import json
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -147,8 +150,24 @@ async def user_search_book(payload: Book, current_user=Depends(get_current_user)
             },
         )
 
-        # MERGE Genres + BELONGS_TO (sin duplicados)
+                # MERGE Genres + BELONGS_TO
         if categories:
+            # Procesar las categorías para obtener un solo género por categoría
+            final_categories = []
+            seen = set()
+            
+            for category in categories:
+                parts = [p.strip() for p in category.split("/") if p.strip()]
+                if not parts:
+                    continue
+                    
+                # Intentar con cada parte hasta encontrar una que no exista
+                for part in parts:
+                    if part.lower() not in seen:
+                        seen.add(part.lower())
+                        final_categories.append(part)
+                        break  # Solo tomamos una parte de cada categoría
+            
             session.run(
                 """
                 MATCH (b:Book {bookId: $book_id})
@@ -159,7 +178,7 @@ async def user_search_book(payload: Book, current_user=Depends(get_current_user)
                 MERGE (g:Genre {name: cat_trimmed})
                 MERGE (b)-[:BELONGS_TO]->(g)
                 """,
-                {"book_id": book_id, "categories": categories},
+                {"book_id": book_id, "categories": final_categories},
             )
 
         # MERGE SEARCHED_FOR (única relación, actualiza timestamp si ya existe)
@@ -182,3 +201,64 @@ async def user_search_book(payload: Book, current_user=Depends(get_current_user)
         "categories": categories,
         "registered": True,
     }
+
+
+@router.get("/user/recommendations")
+async def user_recommendations(current_user=Depends(get_current_user)):
+    """
+    Recomienda libros según los géneros de los libros que el usuario ha buscado.
+    Si no ha buscado ninguno, recomienda por géneros favoritos.
+    """
+    user_id = current_user.get("user_id")
+    driver = get_driver()
+    recommendations = []
+
+    with driver.session() as session:
+        # Libros buscados por el usuario
+        searched_books = session.run(
+            """
+            MATCH (u:User {userId: $user_id})-[:SEARCHED_FOR]->(b:Book)
+            RETURN b.bookId AS bookId
+            """,
+            {"user_id": user_id}
+        ).value()
+
+        if searched_books:
+            # Géneros de los libros buscados
+            genres = session.run(
+                """
+                MATCH (u:User {userId: $user_id})-[:SEARCHED_FOR]->(b:Book)-[:BELONGS_TO]->(g:Genre)
+                RETURN DISTINCT g.name AS genre
+                """,
+                {"user_id": user_id}
+            ).value()
+
+            # Recomendar otros libros de esos géneros que NO haya buscado el usuario
+            result = session.run(
+                """
+                MATCH (g:Genre)<-[:BELONGS_TO]-(b:Book)
+                WHERE g.name IN $genres AND NOT b.bookId IN $searched_books
+                RETURN b.bookId AS bookId, b.title AS title, b.authors AS authors, b.categories AS categories, b.publishedDate AS publishedDate, b.description AS description
+                LIMIT 30
+                """,
+                {"genres": genres, "searched_books": searched_books}
+            )
+            recommendations = [dict(record) for record in result]
+        else:
+            # Si no ha buscado, recomendar por géneros favoritos
+            # Usar los géneros guardados en el microservicio de géneros
+            from app.services.storage import get_user_genres
+            genres = get_user_genres(user_id)
+            genres = genres if genres else []
+            result = session.run(
+                """
+                MATCH (g:Genre)<-[:BELONGS_TO]-(b:Book)
+                WHERE g.name IN $genres
+                RETURN b.bookId AS bookId, b.title AS title, b.authors AS authors, b.categories AS categories, b.publishedDate AS publishedDate, b.description AS description
+                LIMIT 30
+                """,
+                {"genres": genres}
+            )
+            recommendations = [dict(record) for record in result]
+
+    return recommendations
