@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from app.core.auth import get_current_user
 from app.schemas.genres import GenresPayload
+from app.schemas.rating import RatingPayload
 from app.services.storage import save_user_genres, get_user_genres
 from app.services.storage import get_all_genres
 from app.services.graph import create_user_with_genres
@@ -262,3 +263,135 @@ async def user_recommendations(current_user=Depends(get_current_user)):
             recommendations = [dict(record) for record in result]
 
     return recommendations
+
+
+@router.post("/user/rate_book")
+async def rate_book(payload: RatingPayload, current_user=Depends(get_current_user)):
+    """
+    Permite al usuario calificar un libro con estrellas (1-5).
+    Crea la relación [:RATED {stars}] necesaria para el filtrado colaborativo.
+    """
+    user_id = current_user.get("user_id")
+    driver = get_driver()
+    
+    with driver.session() as session:
+        # Verificar que el libro existe
+        book_exists = session.run(
+            "MATCH (b:Book {bookId: $book_id}) RETURN b",
+            {"book_id": payload.bookId}
+        ).single()
+        
+        if not book_exists:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Book with ID {payload.bookId} not found"
+            )
+        
+        # Crear/actualizar rating
+        session.run(
+            """
+            MATCH (u:User {userId: $user_id})
+            MATCH (b:Book {bookId: $book_id})
+            MERGE (u)-[r:RATED]->(b)
+            SET r.stars = $stars, r.timestamp = datetime()
+            """,
+            {
+                "user_id": user_id,
+                "book_id": payload.bookId,
+                "stars": payload.stars
+            }
+        )
+    
+    return {
+        "user_id": user_id,
+        "bookId": payload.bookId,
+        "stars": payload.stars,
+        "message": "Rating saved successfully"
+    }
+
+
+@router.get("/user/ratings")
+async def get_user_ratings(current_user=Depends(get_current_user)):
+    """Obtiene todas las calificaciones del usuario actual."""
+    user_id = current_user.get("user_id")
+    driver = get_driver()
+    
+    with driver.session() as session:
+        result = session.run(
+            """
+            MATCH (u:User {userId: $user_id})-[r:RATED]->(b:Book)
+            RETURN b.bookId AS bookId, b.title AS title, b.authors AS authors,
+                   r.stars AS stars, r.timestamp AS timestamp
+            ORDER BY r.timestamp DESC
+            """,
+            {"user_id": user_id}
+        )
+        
+        ratings = [
+            {
+                "bookId": record["bookId"],
+                "title": record["title"],
+                "authors": record["authors"],
+                "stars": record["stars"],
+                "timestamp": record["timestamp"]
+            }
+            for record in result
+        ]
+    
+    return {
+        "user_id": user_id,
+        "ratings": ratings,
+        "total_ratings": len(ratings)
+    }
+
+
+@router.get("/user/recommendations/collaborative")
+async def get_collaborative_recommendations(current_user=Depends(get_current_user)):
+    """
+    Nivel 3: Recomendaciones por usuarios similares (filtrado colaborativo).
+    Si Laura y Pedro califican ≥4⭐ a "Harry Potter", y Laura lee "El Hobbit" con ≥4⭐,
+    entonces "El Hobbit" se recomienda a Pedro.
+    """
+    user_id = current_user.get("user_id")
+    driver = get_driver()
+    
+    with driver.session() as session:
+        result = session.run(
+            """
+            MATCH (target:User {userId: $user_id})-[r1:RATED]->(shared:Book)<-[r2:RATED]-(similar:User)
+            WHERE r1.stars >= 4 AND r2.stars >= 4 AND target <> similar
+            MATCH (similar)-[r3:RATED]->(recommended:Book)
+            WHERE r3.stars >= 4 
+              AND NOT EXISTS((target)-[:RATED]->(recommended))
+            RETURN recommended.bookId AS bookId,
+                   recommended.title AS title,
+                   recommended.authors AS authors,
+                   similar.name AS recommended_by_user,
+                   shared.title AS because_both_rated_high,
+                   r3.stars AS similar_user_rating
+            ORDER BY r3.stars DESC
+            LIMIT 10
+            """,
+            {"user_id": user_id}
+        )
+        
+        recommendations = [
+            {
+                "bookId": record["bookId"],
+                "title": record["title"],
+                "authors": record["authors"],
+                "recommended_by_user": record["recommended_by_user"],
+                "because_both_rated_high": record["because_both_rated_high"],
+                "similar_user_rating": record["similar_user_rating"],
+                "reason": f"Because you and {record['recommended_by_user']} both rated '{record['because_both_rated_high']}' highly"
+            }
+            for record in result
+        ]
+    
+    return {
+        "user_id": user_id,
+        "level": 3,
+        "type": "collaborative_filtering",
+        "recommendations": recommendations,
+        "total": len(recommendations)
+    }
