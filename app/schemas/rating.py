@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 
 class RatingPayload(BaseModel):
@@ -9,7 +9,8 @@ class RatingPayload(BaseModel):
 class RatingResponse(BaseModel):
     user_id: str
     bookId: str
-    title: str
-    authors: list[str]
+    title: Optional[str] = None
+    authors: Optional[List[str]] = None
     stars: int
-    timestamp: Optional[datetime] = None
+    timestamp: Optional[str] = None
+    message: Optional[str] = None

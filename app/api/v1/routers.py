@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import datetime
+from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from app.core.auth import get_current_user
 from app.schemas.genres import GenresPayload
 from app.schemas.rating import RatingPayload
@@ -6,18 +8,15 @@ from app.services.storage import save_user_genres, get_user_genres
 from app.services.storage import get_all_genres
 from app.services.graph import create_user_with_genres
 
-
 from app.db.neo4j import get_driver
 from app.schemas.book import Book
 import httpx
 import logging
-from fastapi import Request
 from typing import List
 import json
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
 
 
 @router.get("/health")
@@ -269,29 +268,84 @@ async def user_recommendations(current_user=Depends(get_current_user)):
 async def rate_book(payload: RatingPayload, current_user=Depends(get_current_user)):
     """
     Permite al usuario calificar un libro con estrellas (1-5).
-    Crea la relación [:RATED {stars}] necesaria para el filtrado colaborativo.
     """
     user_id = current_user.get("user_id")
     driver = get_driver()
     
     with driver.session() as session:
-        # Verificar que el libro existe
+        # Verificar si el libro existe
         book_exists = session.run(
             "MATCH (b:Book {bookId: $book_id}) RETURN b",
             {"book_id": payload.bookId}
         ).single()
         
+        # Si no existe, intentar crearlo desde Google Books
         if not book_exists:
-            raise HTTPException(
-                status_code=404, 
-                detail=f"Book with ID {payload.bookId} not found"
-            )
+            try:
+                async with httpx.AsyncClient() as client:
+                    gb_res = await client.get(
+                        f"https://www.googleapis.com/books/v1/volumes/{payload.bookId}",
+                        timeout=10.0,
+                    )
+                    if gb_res.status_code == 200:
+                        gb_data = gb_res.json()
+                        volume_info = gb_data.get("volumeInfo", {})
+                        
+                        title = volume_info.get("title", "Unknown Title")
+                        authors = volume_info.get("authors", [])
+                        categories = volume_info.get("categories", [])
+                        
+                        # Crear el libro
+                        session.run(
+                            """
+                            MERGE (b:Book {bookId: $book_id})
+                            SET b.title = $title,
+                                b.authors = $authors,
+                                b.categories = $categories
+                            """,
+                            {
+                                "book_id": payload.bookId,
+                                "title": title,
+                                "authors": authors,
+                                "categories": categories,
+                            },
+                        )
+                        
+                        # Crear géneros
+                        if categories:
+                            final_categories = []
+                            seen = set()
+                            for category in categories:
+                                parts = [p.strip() for p in category.split("/")]
+                                for part in parts:
+                                    if part and part.lower() not in seen:
+                                        seen.add(part.lower())
+                                        final_categories.append(part)
+                                        break
+                            
+                            session.run(
+                                """
+                                MATCH (b:Book {bookId: $book_id})
+                                UNWIND $categories AS cat
+                                MERGE (g:Genre {name: cat})
+                                MERGE (b)-[:BELONGS_TO]->(g)
+                                """,
+                                {"book_id": payload.bookId, "categories": final_categories},
+                            )
+            except Exception as e:
+                logger.exception(f"Error consultando Google Books: {e}")
         
-        # Crear/actualizar rating
+        # Obtener info del libro
+        book_info = session.run(
+            "MATCH (b:Book {bookId: $book_id}) RETURN b.title AS title, b.authors AS authors",
+            {"book_id": payload.bookId}
+        ).single()
+        
+        # Crear rating
         session.run(
             """
             MATCH (u:User {userId: $user_id})
-            MATCH (b:Book {bookId: $book_id})
+            MERGE (b:Book {bookId: $book_id})
             MERGE (u)-[r:RATED]->(b)
             SET r.stars = $stars, r.timestamp = datetime()
             """,
@@ -305,10 +359,12 @@ async def rate_book(payload: RatingPayload, current_user=Depends(get_current_use
     return {
         "user_id": user_id,
         "bookId": payload.bookId,
+        "title": book_info["title"] if book_info else None,
+        "authors": book_info["authors"] if book_info else [],
         "stars": payload.stars,
+        "timestamp": datetime.utcnow().isoformat(),
         "message": "Rating saved successfully"
     }
-
 
 @router.get("/user/ratings")
 async def get_user_ratings(current_user=Depends(get_current_user)):
