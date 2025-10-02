@@ -21,29 +21,20 @@ Sistema de recomendaciones inteligente basado en **Neo4j** y **FastAPI** que ana
 2. **🔍 Por búsquedas:** Basado en el historial de búsquedas del usuario  
 3. **👥 Por usuarios similares:** Si Laura y Pedro califican ≥4⭐ a "Harry Potter", y Laura lee "El Hobbit" con ≥4⭐, entonces "El Hobbit" se recomienda a Pedro
 
-## 🛠️ Instalación y configuración
 
-### 1. **Instalar dependencias**
+
+## 🛠️ Instalación
+
+### 1. Clona el repositorio
 ```bash
-pip install -r requirements.txt
+git clone <url-del-repositorio>
+cd BACK-RECOMMENDATIONS
 ```
 
-### 2. **Configurar variables de entorno (opcional)**
-```bash
-# Copia .env.example a .env y modifica las credenciales si es necesario
-cp .env.example .env
-```
+### 2. Docker
+docker-compose up --build
 
-### 3. **Probar la conexión a Neo4j**
-```bash
-# Ejecuta el script completo de pruebas
-python test_neo4j.py
-```
-
-### 4. **Ejecutar el servidor API**
-```bash
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8002 --reload
-```
+Corre en el puerto 8002
 
 ## 🧪 Testing y desarrollo
 
