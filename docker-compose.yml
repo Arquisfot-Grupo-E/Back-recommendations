@@ -8,13 +8,35 @@ services:
       - .env
     environment:
       - PYTHONUNBUFFERED=1
+      # Neo4j Aura (Cloud) - Configurar en .env
+      - NEO4J_URI=${NEO4J_URI:-neo4j+s://7724e3af.databases.neo4j.io}
+      - NEO4J_USER=${NEO4J_USER:-neo4j}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
     volumes:
       - ./app:/app/app
       - ./routes:/app/routes
     networks:
-      - bookworm_network
+      - backend_network  # Solo backend_network (BD en la nube, no necesita data_network)
 
+# =============================================================================
+# REDES SEGMENTADAS
+# =============================================================================
+# Back-recommendations:
+#   - backend_network: Recibe peticiones del gateway
+#   - Neo4j está en Neo4j Aura (cloud), se conecta por internet usando neo4j+s://
+#
+# PREREQUISITO: 
+#   1. Ejecutar bash scripts/setup-networks.sh (en Middleware-Graphql)
+#   2. Configurar credenciales de Neo4j Aura en archivo .env
+#
+# Ejemplo .env:
+#   NEO4J_URI=neo4j+s://7724e3af.databases.neo4j.io
+#   NEO4J_USER=neo4j
+#   NEO4J_PASSWORD=VPNmEMXVO5z6nq9UbxRvVrvGLBtigc1uxf7fLVWoVD0
+#
+# ⚠️ IMPORTANTE: No commitear credenciales al repositorio
+# =============================================================================
 networks:
-  bookworm_network:
+  backend_network:
     external: true
-    name: bookworm_network
+    name: backend_network
